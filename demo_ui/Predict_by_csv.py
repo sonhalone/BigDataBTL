@@ -10,10 +10,10 @@ st.set_page_config(
     page_title="Banking Service AI",
     page_icon="🏦",
     layout="wide",
-    initial_sidebar_state="collapsed"  # Ẩn sidebar mặc định cho gọn
+    initial_sidebar_state="collapsed"
 )
 
-# Custom CSS để làm đẹp giao diện
+# Custom CSS
 st.markdown("""
 <style>
     .main-header {
@@ -68,7 +68,7 @@ except Exception as e:
 
 
 # =========================
-# PREPROCESS FUNCTION (GIỮ NGUYÊN)
+# PREPROCESS FUNCTION
 # =========================
 @st.cache_data
 def preprocess_raw(df_raw):
@@ -76,7 +76,8 @@ def preprocess_raw(df_raw):
 
     # binary mapping
     for col in ['default', 'housing', 'loan']:
-        df[col] = df[col].map({'yes': 1, 'no': 0})
+        if col in df.columns:
+            df[col] = df[col].map({'yes': 1, 'no': 0})
 
     # one-hot
     df = pd.get_dummies(
@@ -84,7 +85,7 @@ def preprocess_raw(df_raw):
         columns=['job', 'marital', 'education', 'contact', 'month', 'poutcome']
     )
 
-    # align before scale
+    # align before scale (Tự động điền 0 nếu thiếu cột, nhưng tốt nhất là input đủ)
     df = df.reindex(columns=feature_columns, fill_value=0)
 
     # scale
@@ -94,7 +95,11 @@ def preprocess_raw(df_raw):
     # create *_total
     def add_total(prefix):
         cols = [c for c in df_scaled.columns if c.startswith(prefix)]
-        df_scaled[f"{prefix[:-1]}_total"] = df_scaled[cols].mean(axis=1)
+        # Tính mean nếu có cột, tránh lỗi nếu list rỗng
+        if cols:
+            df_scaled[f"{prefix[:-1]}_total"] = df_scaled[cols].mean(axis=1)
+        else:
+            df_scaled[f"{prefix[:-1]}_total"] = 0
         return cols
 
     drop_cols = []
@@ -139,7 +144,7 @@ with tab_csv:
 
         with col_preview:
             st.info(f"File uploaded successfully. Rows: {df_raw.shape[0]}")
-            with st.expander("👀 View Raw Data"):
+            with st.expander("👀 Preview Data"):
                 st.dataframe(df_raw.head())
 
         # Button to trigger prediction
@@ -152,12 +157,11 @@ with tab_csv:
 
                 st.success("Analysis Complete!")
 
-                # --- Result Visualization Layout ---
+                # --- Result Visualization ---
                 res_col1, res_col2, res_col3 = st.columns([1, 1, 1])
 
                 with res_col1:
                     st.metric("Total Customers", len(df_raw))
-
 
                 with res_col2:
                     st.markdown("**Model Performance (ROC)**")
@@ -193,12 +197,12 @@ with tab_csv:
                 st.error(f"Prediction failed: {e}")
 
 # =====================================================
-# TAB 2: PREDICT BY INPUT
+# TAB 2: PREDICT BY INPUT (ĐÃ CẬP NHẬT THÊM 'DAY')
 # =====================================================
 with tab_input:
     st.markdown('<div class="sub-header">Customer Profile Input</div>', unsafe_allow_html=True)
 
-    # Chia input thành 3 cột logic để dễ nhìn hơn
+    # Chia input thành 3 cột logic
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -213,18 +217,22 @@ with tab_input:
         st.markdown("#### 💰 Financial Status")
         balance = st.number_input("Annual Balance (€)", -100000, 1000000, 0)
         default = st.selectbox("Has Credit in Default?", ["no", "yes"])
-        housing = st.selectbox("Has Housing Loan?", ["no", "yes"])
+        housing = st.selectbox("Has House?", ["no", "yes"])
         loan = st.selectbox("Has Personal Loan?", ["no", "yes"])
 
     with col3:
         st.markdown("#### 📞 Campaign Info")
         contact = st.selectbox("Contact Communication", ["cellular", "telephone", "unknown"])
+
+        # --- CẬP NHẬT: Thêm cột DAY vào đây ---
+        day = st.number_input("Day of Month", 1, 31, 15, help="Ngày thực hiện cuộc gọi (1-31)")
+        # ---------------------------------------
+
         month = st.selectbox("Last Contact Month",
                              ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])
         duration = st.number_input("Duration (sec)", 0, 5000, 300)
         campaign = st.number_input("Campaign Contacts", 1, 50, 1)
 
-        # Nhóm 2 cái ít dùng vào expander cho gọn
         with st.expander("Advanced History"):
             pdays = st.number_input("Pdays (-1 if new)", -1, 999, -1)
             previous = st.number_input("Previous Contacts", 0, 100, 0)
@@ -232,26 +240,47 @@ with tab_input:
 
     st.write("---")
 
-    # Nút bấm và Kết quả căn giữa
+    # Nút bấm và Kết quả
     c_btn, c_res = st.columns([1, 2])
 
     with c_btn:
         predict_btn = st.button("🔮 ANALYZE CUSTOMER", use_container_width=True)
 
     if predict_btn:
+        # Tạo DataFrame input (Đã thêm cột day)
         input_df = pd.DataFrame([{
-            "age": age, "balance": balance, "duration": duration, "campaign": campaign,
-            "pdays": pdays, "previous": previous, "default": default, "housing": housing,
-            "loan": loan, "job": job, "marital": marital, "education": education,
-            "contact": contact, "month": month, "poutcome": poutcome
+            "age": age,
+            "balance": balance,
+            "day": day,
+            "month": month,
+            "duration": duration,
+            "campaign": campaign,
+            "pdays": pdays,
+            "previous": previous,
+            "default": default,
+            "housing": housing,
+            "loan": loan,
+            "job": job,
+            "marital": marital,
+            "education": education,
+            "contact": contact,
+            "poutcome": poutcome
         }])
 
         try:
+            # Debugging option (có thể bỏ comment nếu cần kiểm tra)
+            # st.write("Raw input:", input_df)
+
             X = preprocess_raw(input_df)
+
+            # Debugging data columns (giúp kiểm tra xem có khớp feature không)
+            # st.write("Processed input:", X)
+
             pred = model.predict(X)[0]
+            st.write(pred)
 
             with c_res:
-                if pred == 1:
+                if pred == 'yes':
                     st.success("✅ **HIGH POTENTIAL**: Customer is likely to use the banking service.")
                     st.balloons()
                 else:
